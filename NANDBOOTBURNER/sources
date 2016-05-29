@@ -1,0 +1,25 @@
+# 
+# Copyright (C) 2009, Freescale Semiconductor, Inc. All Rights Reserved.
+# THIS SOURCE CODE, AND ITS USE AND DISTRIBUTION, IS SUBJECT TO THE TERMS
+# AND CONDITIONS OF THE APPLICABLE LICENSE AGREEMENT
+# 
+
+SYNCHRONIZE_DRAIN=1
+TARGETNAME=NandBootBurner
+TARGETTYPE=LIBRARY
+WINCEOEM=1
+
+INCLUDES= \
+  $(INCLUDES); \
+  $(_TARGETPLATROOT)\src\inc; \
+  $(_TARGETPLATROOT)\src\BOOTLOADER\COMMON; \
+  $(_PLATFORMROOT)\common\src\SOC\$(_SOCDIR)\MEDIA; \
+  $(_PLATFORMROOT)\common\src\SOC\$(_SOCDIR)\media\nand\include; \
+  $(_PLATFORMROOT)\common\src\soc\$(_SOCDIR)\PMU\INC; \
+  $(_PLATFORMROOT)\common\src\soc\$(_COMMONSOCDIR)\boot\fmd\nand; \
+  $(_PLATFORMROOT)\common\src\soc\$(_COMMONSOCDIR)\boot\fmd\sdmmc; \
+
+SOURCES= \
+    NandBootBurner.c \
+    OTP.c
+
