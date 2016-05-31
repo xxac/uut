@@ -373,6 +373,38 @@ BOOL GetNextGoodBlock(DWORD StartPhyBlockAddr, DWORD *pNxtGoodBlkAddr)
 }
 
 
+BOOL GetGoodPhyBlockEx(UINT32 StartPhyBlockAddr, UINT32 *pNxtGoodBlkAddr)
+{
+	UINT32 BlockStatus;
+	FlashInfo flashInfo;
+
+	if (!FMD_GetInfo(&flashInfo))
+	{
+		RETAILMSG(TRUE, (_T("ERROR: Unable to get NAND flash information.\r\n")));
+		return FALSE;
+	}
+
+	do
+	{
+		//check border validation
+		if(StartPhyBlockAddr >= flashInfo.dwNumBlocks)
+			return FALSE;
+
+		//check block status
+		BlockStatus = FMD_GetBlockStatus(StartPhyBlockAddr);
+		if(BlockStatus != BLOCK_STATUS_BAD) break;
+		//We start with next block of StartPhyBlockAddr
+		StartPhyBlockAddr++;
+
+	}while(BlockStatus == BLOCK_STATUS_BAD);
+
+	//return good block address
+	*pNxtGoodBlkAddr = StartPhyBlockAddr;
+
+	return TRUE;
+}
+
+
 BOOL GetPhyBlkAddr(DWORD LogicalBlkAddr, DWORD *pNxtGoodBlkAddr)
 {
     DWORD i;
@@ -791,30 +823,30 @@ BOOL NANDWriteSB(PNANDIORequest pRequest, LPBYTE pImage, DWORD dwLength)
     DWORD dwPhySectorSize;
     LPBYTE pOriginalImage = pImage;
     DWORD dwOriginalLength = dwLength;
-RETAILMSG(TRUE, (_T("common nandbootbunner NANDWriteSB.\r\n")));
+	DEBUGMSG(TRUE, (_T("common nandbootbunner NANDWriteSB.\r\n")));
     if(!FMD_GetInfo(&flashInfo))
     {
         RETAILMSG(TRUE, (_T("ERROR: Unable to get NAND flash information.\r\n")));
-        return FALSE;
+        goto Exit_EBOOT;
     }
     
     dwPhySectorSize = flashInfo.wDataBytesPerSector;
     pExtraBuf = (PBYTE) LocalAlloc(LPTR, dwPhySectorSize); 
     if(pExtraBuf == NULL){
         ERRORMSG(TRUE, (_T("Allocate memory buffer with size of 0x%x failed!\r\n"),flashInfo.dwBytesPerBlock+dwPhySectorSize));
-        return FALSE;
+        goto Exit_EBOOT;
     }
         
     // Check parameters
     if(dwLength < g_ImgInfo.dwSBLenUnit)
     {
         ERRORMSG(TRUE, (_T("length size(0x%x) is smaller than expected (0x%x)\r\n"), dwLength, g_ImgInfo.dwSBLenUnit));
-        return FALSE;
+        goto Exit_EBOOT;
     }
     if(pRequest->dwIndex > g_ImgInfo.dwSBLen / g_ImgInfo.dwSBLenUnit)
     {
         ERRORMSG(TRUE, (_T("dwIndex (0x%x) exceeds expected (0x%x)\r\n"), pRequest->dwIndex, g_ImgInfo.dwSBLen / g_ImgInfo.dwSBLenUnit));
-        return FALSE;
+        goto Exit_EBOOT;
     }
     
     memset(pExtraBuf, 0xFF, dwPhySectorSize);    
@@ -823,7 +855,7 @@ RETAILMSG(TRUE, (_T("common nandbootbunner NANDWriteSB.\r\n")));
     pVerSectorBuf = (PBYTE) LocalAlloc(LPTR, dwPhySectorSize);
     if (pVerSectorBuf == NULL) {
         ERRORMSG(1, (_T("Failed to alloc enough memory space! Memory required: 0x%x bytes.\r\n"), flashInfo.wDataBytesPerSector));    
-        return FALSE;
+        goto Exit_EBOOT;
     }    
     
     // Fill the sectorInfo
@@ -841,18 +873,23 @@ RETAILMSG(TRUE, (_T("common nandbootbunner NANDWriteSB.\r\n")));
 begin_program:    
     StartLogBlkAddr += pRequest->dwIndex;
     
-    RETAILMSG(TRUE, (_T("INFO: Programming NAND flash blocks 0x%x\r\n"), StartLogBlkAddr));
+    DEBUGMSG(TRUE, (_T("INFO: Programming NAND flash blocks 0x%x\r\n"), StartLogBlkAddr));
     
     if(pRequest->dwIndex == 0)
     {
         NANDClearNCB(pRequest->SBPos);   
     }
-    if(!GetGoodPhyBlock(StartLogBlkAddr, &PhyBlockAddr))
-    {
-        ERRORMSG(TRUE, (_T("GetGoodPhyBlock failed: 0x%x\r\n"),StartLogBlkAddr));  
-        return FALSE; 
-    }
-    
+	if(!GetGoodPhyBlock(StartLogBlkAddr, &PhyBlockAddr))
+	{
+		ERRORMSG(TRUE, (_T("GetGoodPhyBlock failed: 0x%x\r\n"),StartLogBlkAddr));  
+		goto Exit_EBOOT;
+	}
+	if(PhyBlockAddr>IMAGE_BOOT_BOOTIMAGE_NAND_OFFSET + IMAGE_BOOT_BOOTIMAGE_NAND_BLOCKS)
+	{
+		RETAILMSG(TRUE, (_T("Error: Eboot blocks have been damaged! \r\n")));
+		goto Exit_EBOOT;
+	}
+	DEBUGMSG(TRUE, (_T("StartLogBlkAdd=0x%x 0x%x\r\n"),StartLogBlkAddr,PhyBlockAddr));
     // Erase the block...
     if (!FMD_EraseBlock(PhyBlockAddr))
     {
@@ -860,7 +897,7 @@ begin_program:
         if(!(FMD_GetBlockStatus(PhyBlockAddr) & BLOCK_STATUS_BAD))
         {
             RETAILMSG(TRUE, (_T("ERROR: Unable to erase NAND flash block [0x%x].\r\n"), PhyBlockAddr));
-            return FALSE;
+            goto Exit_EBOOT;
         }
     }
     
@@ -883,19 +920,19 @@ begin_program:
         if (!FMD_WriteSector(sectorAddr, pBuf, &sectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to update EBOOT/SBOOT.\r\n")));
-            return FALSE;
+            goto Exit_EBOOT;
         }
 
         if (!FMD_ReadSector(sectorAddr, pVerSectorBuf, &VersectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-            return FALSE;
+            goto Exit_EBOOT;
         }
 
         if (memcmp(pBuf, pVerSectorBuf, flashInfo.wDataBytesPerSector) != 0)
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-            return FALSE;
+            goto Exit_EBOOT;
         }
         
         pImage += flashInfo.wDataBytesPerSector; 
@@ -919,6 +956,16 @@ begin_program:
         LocalFree(pVerSectorBuf);
     }
     return(TRUE);
+Exit_EBOOT:
+	if(pExtraBuf)
+	{
+		LocalFree(pExtraBuf);
+	}   
+	if(pVerSectorBuf)
+	{ 
+		LocalFree(pVerSectorBuf);
+	}
+	return(FALSE);
 }
 
 BOOL NANDEndWriteSB(PNANDIORequest pRequest)
@@ -975,25 +1022,25 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
     if(!NANDBootInit())
     {
         RETAILMSG(TRUE, (_T("WARNING: NANDBootInit fail\r\n")));
-        return FALSE;
+        goto Exit_NK;
     }
 
     if(!FMD_GetInfo(&flashInfo))
     {
         RETAILMSG(TRUE, (_T("ERROR: Unable to get NAND flash information.\r\n")));
-        return FALSE;
+        goto Exit_NK;
     }
 
     // Check parameters
     if(dwLength < g_ImgInfo.dwNB0LenUnit)
     {
         ERRORMSG(TRUE, (_T("length size(0x%x) is smaller than expected (0x%x)\r\n"), dwLength, g_ImgInfo.dwNB0LenUnit));
-        return FALSE;
+        goto Exit_NK;
     }
     if(dwIndex > g_ImgInfo.dwNB0Len / g_ImgInfo.dwNB0LenUnit)
     {
         ERRORMSG(TRUE, (_T("dwIndex (0x%x) exceeds expected (0x%x)\r\n"), dwIndex, g_ImgInfo.dwNB0Len / g_ImgInfo.dwNB0LenUnit));
-        return FALSE;
+        goto Exit_NK;
     }
     
     // Write EBOOT to NAND flash
@@ -1001,7 +1048,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
     pVerSectorBuf = pVerifyBuf = (PBYTE) LocalAlloc(LPTR, flashInfo.dwBytesPerBlock);
     if (!pVerifyBuf) {
         ERRORMSG(1, (_T("Failed to alloc enough memory space!\r\n"))); 
-        goto exit;   
+        goto Exit_NK;   
     }
 
     // Fill the sectorInfo
@@ -1019,12 +1066,28 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
 	
     DEBUGMSG(TRUE, (_T("INFO: Programming NAND flash blocks [0x%x].\r\n"), StartLogBlkAddr));        
 
-retry:
-    if(!GetPhyBlkAddr(StartLogBlkAddr, &PhyBlockAddr))
-    {
-        RETAILMSG(TRUE, (_T("Error: No good block found - unable to store image!\r\n")));
-        goto exit;
-    }
+	if(!GetPhyBlkAddr(StartLogBlkAddr, &PhyBlockAddr))
+	{
+		RETAILMSG(TRUE, (_T("Error: No good block found - unable to store image0x%x!\r\n"),StartLogBlkAddr));
+		goto Exit_NK;
+	}
+	if (flag != IMAGE_RSNK)
+	{
+		if(PhyBlockAddr>IMAGE_BOOT_NKIMAGE_NAND_OFFSET+IMAGE_BOOT_NKIMAGE_BLOCKS)
+		{
+			RETAILMSG(TRUE, (_T("Error: NK blocks have been damaged! \r\n")));
+			goto Exit_NK;
+		}
+	}
+	else
+	{
+		if(PhyBlockAddr>IMAGE_BOOT_RESCUEIMG_NAND_OFFSET+IMAGE_BOOT_RESCUEIMG_NAND_BLOCKS)
+		{
+			RETAILMSG(TRUE, (_T("Error: RSNK blocks have been damaged! \r\n")));
+			goto Exit_NK;
+		}
+	}
+
 
     // Erase the block...
     if (!FMD_EraseBlock(PhyBlockAddr))
@@ -1033,11 +1096,7 @@ retry:
         if(!(FMD_GetBlockStatus(PhyBlockAddr) & BLOCK_STATUS_BAD))
         {
             RETAILMSG(TRUE, (_T("ERROR: Unable to erase NAND flash block [0x%x].\r\n"), PhyBlockAddr));
-            goto exit;
-        }
-        else
-        {
-            goto retry;
+            goto Exit_NK;
         }
     }
     
@@ -1050,7 +1109,7 @@ retry:
         if (!FMD_WriteSector(sectorAddr, pSectorBuf, &sectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to update image.\r\n")));
-            goto exit;
+            goto Exit_NK;
         }
 
         pSectorBuf += flashInfo.wDataBytesPerSector;
@@ -1064,7 +1123,7 @@ retry:
         if (!FMD_ReadSector(sectorAddr, pVerSectorBuf, &VersectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-            goto exit;
+            goto Exit_NK;
         }
         pVerSectorBuf += flashInfo.wDataBytesPerSector;
     }
@@ -1073,15 +1132,20 @@ retry:
     if (memcmp(pSectorBuf - flashInfo.dwBytesPerBlock, pVerSectorBuf, flashInfo.dwBytesPerBlock) != 0)
     {
         RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-        goto exit;
+        goto Exit_NK;
     }
     
-exit:
     if(pVerifyBuf)
     {  
         LocalFree(pVerifyBuf);
     }
     return(TRUE);
+Exit_NK:
+	if(pVerifyBuf)
+	{  
+		LocalFree(pVerifyBuf);
+	}
+	return(FALSE);
 
 }
 
@@ -1100,31 +1164,31 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
     if(!FMD_GetInfo(&flashInfo))
     {
         RETAILMSG(TRUE, (_T("ERROR: Unable to get NAND flash information.\r\n")));
-        return FALSE;
+        goto Exit_TCBVCB;
     }
     if( tv == IMAGE_TCB && (dwIndex > IMAGE_BOOT_BOOTCFG_NAND_BLOCKS-1) )
     {
         RETAILMSG(TRUE, (_T("dwIndex (0x%x) exceeds expected (0x%x)\r\n"), dwIndex, (IMAGE_BOOT_BOOTCFG_NAND_BLOCKS-1)));
-        return FALSE;
+        goto Exit_TCBVCB;
     }
 	if( tv == IMAGE_VCB && (dwIndex > IMAGE_BOOT_VECTCFG_NAND_BLOCKS-1) )
 	{
 		RETAILMSG(TRUE, (_T("dwIndex (0x%x) exceeds expected (0x%x)\r\n"), dwIndex, (IMAGE_BOOT_VECTCFG_NAND_BLOCKS-1)));
-		return FALSE;
+		goto Exit_TCBVCB;
 	}
 
     dwPhySectorSize = flashInfo.wDataBytesPerSector;
     pExtraBuf = (PBYTE) LocalAlloc(LPTR, dwPhySectorSize); 
     if(pExtraBuf == NULL){
         RETAILMSG(TRUE, (_T("Allocate memory buffer with size of 0x%x failed!\r\n"),flashInfo.dwBytesPerBlock+dwPhySectorSize));
-        return FALSE;
+        goto Exit_TCBVCB;
     }
 		memset(pExtraBuf, 0xFF, dwPhySectorSize); 
     // Write tcb to NAND flash
     pVerSectorBuf = (PBYTE) LocalAlloc(LPTR, dwPhySectorSize);
     if (pVerSectorBuf == NULL) {
         RETAILMSG(1, (_T("Failed to alloc enough memory space! Memory required: 0x%x bytes.\r\n"), flashInfo.wDataBytesPerSector));    
-        goto exit;
+        goto Exit_TCBVCB;
     } 
     // Fill the sectorInfo
     memset(&sectorInfo, 0xFF, sizeof(sectorInfo));
@@ -1143,16 +1207,21 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
 	if (tv == IMAGE_TCB)
 	{
 		// dont erase sn/mac
-		if(!GetGoodPhyBlock(StartLogBlkAddr, &PhyBlockAddr))
+		if(!GetGoodPhyBlockEx(StartLogBlkAddr, &PhyBlockAddr))
 		{
-			RETAILMSG(TRUE, (_T("GetGoodPhyBlock failed: 0x%x\r\n"),StartLogBlkAddr));  
-			goto exit;
+			RETAILMSG(TRUE, (_T("GetGoodPhyBlockEx failed: 0x%x\r\n"),StartLogBlkAddr));  
+			goto Exit_TCBVCB;
+		}
+		if(PhyBlockAddr>IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
+		{
+			RETAILMSG(TRUE, (_T("Error: TCB blocks have been damaged! \r\n")));
+			goto Exit_TCBVCB;
 		}
 		// Read one section
 		if (!FMD_ReadSector(PhyBlockAddr * flashInfo.wSectorsPerBlock, pVerSectorBuf, &VersectorInfo, 1))
 		{
 			RETAILMSG(TRUE, (_T("ERROR: Failed to read image.\r\n")));
-			goto exit;
+			goto Exit_TCBVCB;
 		}
 		cfg = (struct saio_tcb *)pImage;
 
@@ -1175,13 +1244,27 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
 	}
 
 
-
-retry:
-    if(!GetGoodPhyBlock(StartLogBlkAddr, &PhyBlockAddr))
-    {
-        RETAILMSG(TRUE, (_T("GetGoodPhyBlock failed: 0x%x\r\n"),StartLogBlkAddr));  
-        goto exit;
-    }
+	if(!GetGoodPhyBlockEx(StartLogBlkAddr, &PhyBlockAddr))
+	{
+		RETAILMSG(TRUE, (_T("GetGoodPhyBlockEx failed: 0x%x\r\n"),StartLogBlkAddr));  
+		goto Exit_TCBVCB;
+	}
+	if (tv == IMAGE_TCB)
+	{
+		if(PhyBlockAddr>IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
+		{
+			RETAILMSG(TRUE, (_T("Error: TCB blocks have been damaged! \r\n")));
+			goto Exit_TCBVCB;
+		}
+	}
+	else
+	{
+		if(PhyBlockAddr>IMAGE_BOOT_VECTCFG_NAND_OFFSET+IMAGE_BOOT_VECTCFG_NAND_BLOCKS)
+		{
+			RETAILMSG(TRUE, (_T("Error: VCB blocks have been damaged! \r\n")));
+			goto Exit_TCBVCB;
+		}
+	}
     // Erase the block...
     if (!FMD_EraseBlock(PhyBlockAddr))
     {
@@ -1189,11 +1272,7 @@ retry:
         if(!(FMD_GetBlockStatus(PhyBlockAddr) & BLOCK_STATUS_BAD))
         {
             RETAILMSG(TRUE, (_T("ERROR: Unable to erase NAND flash block [0x%x].\r\n"), PhyBlockAddr));
-            goto exit;
-        }
-        else
-        {
-            goto retry;
+            goto Exit_TCBVCB;;
         }
     }
     
@@ -1215,26 +1294,25 @@ retry:
         if (!FMD_WriteSector(sectorAddr, pBuf, &sectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to update EBOOT/SBOOT.\r\n")));
-            goto exit;
+            goto Exit_TCBVCB;
         }
 
         if (!FMD_ReadSector(sectorAddr, pVerSectorBuf, &VersectorInfo, 1))
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-            goto exit;
+            goto Exit_TCBVCB;
         }
 
         if (memcmp(pBuf, pVerSectorBuf, flashInfo.wDataBytesPerSector) != 0)
         {
             RETAILMSG(TRUE, (_T("ERROR: Failed to verify image.\r\n")));
-            goto exit;
+            goto Exit_TCBVCB;
         }
         if(dwLength <= ((sectorAddr-startSectorAddr+1)*dwPhySectorSize)) break;
         pImage += flashInfo.wDataBytesPerSector; 
         dwLength -= flashInfo.wDataBytesPerSector;
     }
     
-exit:
     if(pExtraBuf)
     {
         LocalFree(pExtraBuf);
@@ -1244,6 +1322,17 @@ exit:
         LocalFree(pVerSectorBuf);
     }
     return(TRUE);
+Exit_TCBVCB:
+	if(pExtraBuf)
+	{
+		LocalFree(pExtraBuf);
+	}   
+	if(pVerSectorBuf)
+	{ 
+		LocalFree(pVerSectorBuf);
+	}
+	RETAILMSG(TRUE, (_T("NANDWriteTCBVCB FAIL.\r\n")));
+	return FALSE;
 }
 BOOL NANDCopyBack(SBPosition SrcPos, SBPosition DestPos)
 {
@@ -1576,26 +1665,30 @@ BOOL BSP_OEMIoControl(DWORD dwIoControlCode, PBYTE pInBuf, DWORD nInBufSize,
 
                 BSPNAND_SetClock(TRUE);
 /*                
-                if(pNANDWrtImgInfo->dwImgType == IMAGE_NK)
-                {
-                    NANDBootReserved();
-                }
-                else if(pNANDWrtImgInfo->dwImgType != IMAGE_TCB && pNANDWrtImgInfo->dwImgType != IMAGE_VCB)
-                {
-                    NANDIORequest NANDIORequest;            
+				if(pNANDWrtImgInfo->dwImgType == IMAGE_NK)
+				{
+				NANDBootReserved();
+				}
+				else
+				{
+				NANDIORequest NANDIORequest;            
 
-                    NANDIORequest.SBPos = BothBoot;           
-                    rc = NANDEndWriteSB(&NANDIORequest);                  
-                }       
+				NANDIORequest.SBPos = BothBoot;           
+				rc = NANDEndWriteSB(&NANDIORequest);                  
+				}         
 */
-				if(pNANDWrtImgInfo->dwImgType != IMAGE_NK && pNANDWrtImgInfo->dwImgType != IMAGE_TCB \
-					&& pNANDWrtImgInfo->dwImgType != IMAGE_VCB && pNANDWrtImgInfo->dwImgType != IMAGE_RSNK)
+				if(pNANDWrtImgInfo->dwImgType != IMAGE_EBOOT)
+				{
+					NANDBootReserved();
+				}
+				else
 				{
                     NANDIORequest NANDIORequest;            
 
                     NANDIORequest.SBPos = BothBoot;           
                     rc = NANDEndWriteSB(&NANDIORequest);                  
                 }
+
                 BSPNAND_SetClock(FALSE);
 
                 break;    

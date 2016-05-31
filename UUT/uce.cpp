@@ -52,6 +52,7 @@ TCHAR   g_DiskName[12];
 HANDLE  g_hFile=INVALID_HANDLE_VALUE;
 
 static DWORD dwStartTime=0, dwElapsedTime=0;
+static BOOL g_UpdateNGFlag = FALSE;
 
 extern DWORD   g_MediaType;
 extern NANDWrtImgInfo g_NANDWrtImgInfo;
@@ -518,7 +519,6 @@ BOOL Cmd_send(PUTP_MSG pUTPMsg)
         }
         else
         {
-        	if (g_FileType == Tcb || g_FileType == Vcb) g_PartialTransfer = TRUE;
             g_PayloadBuf = (PBYTE) LocalAlloc(LPTR, g_Payloadsize);                
         }         
 
@@ -571,7 +571,11 @@ BOOL Cmd_save()
                     DEBUGMSG(1, (_T("Cmd_save:PartialWriteLoop is : 0x%x.\r\n"),PartialWriteLoop));                
                     for(i=0; i<PartialWriteLoop;i++){                            
                         if(g_FileType == Firmware || g_FileType == Tcb || g_FileType == Vcb){
-                            PartialWriteImage(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize);
+                            if (! PartialWriteImage(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize))
+							{
+								RETAILMSG(1, (_T("Cmd_save:PartialWriteImage failed.\r\n"))); 
+								goto Exit_Cmd_save;
+							}
                         }
                         else if(g_FileType == RawData){
                             UceWriteRawData(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize);
@@ -583,9 +587,13 @@ BOOL Cmd_save()
                 if(g_pCurPayloadBuf > (g_PayloadBuf + PartialWriteLoop*g_MinBufSize))
                 {
                     DEBUGMSG(1, (_T("Cmd_save:the last data need be sent.\r\n"))); 
-                    if(g_FileType == Firmware)
+                    if(g_FileType == Firmware || g_FileType == Tcb || g_FileType == Vcb)
                     {
-                        PartialWriteImage(g_PayloadBuf,g_pCurPayloadBuf - (g_PayloadBuf + PartialWriteLoop*g_MinBufSize));
+						if (! PartialWriteImage(g_PayloadBuf,g_pCurPayloadBuf - (g_PayloadBuf + PartialWriteLoop*g_MinBufSize)))
+						{
+							RETAILMSG(1, (_T("Cmd_save:PartialWriteImage FAIL.\r\n"))); 
+							goto Exit_Cmd_save;
+						}
                     }
                     else if(g_FileType == RawData)
                     {
@@ -614,7 +622,23 @@ BOOL Cmd_save()
     }            
     g_UtpCmdState = UCE_IDLE;  
 
+	if(g_UpdateNGFlag) 
+	{
+		RETAILMSG(1, (L"g_UpdateNGFlag is ture.\r\n"));
+		return FALSE;
+	}
     return TRUE;
+Exit_Cmd_save:
+	if(g_FileType == Firmware)
+	{
+		EndPartialWriteImage(); 
+	}
+	if (g_PayloadBuf)
+	{ 
+		LocalFree(g_PayloadBuf);            
+	} 
+	g_UtpCmdState = UCE_IDLE; 
+	return FALSE;
 }
 // add 2015-09-14,write NCB
 BOOL Write_ncb()
@@ -789,7 +813,11 @@ void UceCommandDeal(
         Cmd_send(pUTPMsg);                 
     }  
     else if (strncmp(pbCmd,"save",4) == 0) {
-        Cmd_save();
+		if (!Cmd_save())
+		{
+			RETAILMSG(1, (_T("UTP command:save data failed!\r\n")));
+			goto Exit;
+		}
     }
     else if (strncmp(pbCmd,"Done",4) == 0) {
 		Write_ncb();
@@ -821,6 +849,7 @@ void UceTransData(
     DWORD DataLength
 )
 {
+	g_UpdateNGFlag = FALSE;
     // Call the appropriate command handler
     switch (g_UtpCmdState)
     {
@@ -855,8 +884,12 @@ void UceTransData(
                                 DWORD i;                
                                 DEBUGMSG(1, (_T("PartialWriteLoop is : 0x%x.\r\n"),PartialWriteLoop));                
                                 for(i=0; i<PartialWriteLoop;i++){
-                                    if(g_FileType == Firmware){
-                                        PartialWriteImage(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize);
+                                    if(g_FileType == Firmware || g_FileType == Tcb || g_FileType == Vcb){
+										if (! PartialWriteImage(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize))
+										{
+											RETAILMSG(1, (L"UceTransData PartialWriteImage failed. \r\n"));
+											g_UpdateNGFlag = TRUE;
+										}
                                     }
                                     else if(g_FileType == RawData){
                                         UceWriteRawData(g_PayloadBuf + (i*g_MinBufSize),g_MinBufSize);
@@ -871,7 +904,11 @@ void UceTransData(
                             DEBUGMSG(1, (_T("UceTransData: g_Payloadsize is less than g_MinBufSize.\r\n")));
                             if(g_pCurPayloadBuf >= (g_PayloadBuf + g_Payloadsize)){
                                 if(g_FileType == Firmware || g_FileType == Tcb || g_FileType == Vcb){
-                                    PartialWriteImage(g_PayloadBuf,g_Payloadsize);
+									if (! PartialWriteImage(g_PayloadBuf,g_Payloadsize))
+									{
+										RETAILMSG(1, (L"UceTransData PartialWriteImage FAIL. \r\n"));
+										g_UpdateNGFlag = TRUE;
+									}
                                 }
                                 else if(g_FileType == RawData){
                                     UceWriteRawData(g_PayloadBuf,g_Payloadsize);
@@ -884,7 +921,8 @@ void UceTransData(
                     }
                     if((100- (dwRestDataLength*100/g_Payloadsize)) > g_lastPercentage){
                         g_lastPercentage = 100- (dwRestDataLength*100/g_Payloadsize);
-                        RETAILMSG(TRUE, (L"Recieving data: %2d%% finished.\r", g_lastPercentage));                    
+                        //RETAILMSG(TRUE, (L"Recieving data: %2d%% finished.\r", g_lastPercentage)); 
+						RETAILMSG(TRUE, (L". \r"));
                     }
                     break; 
                     }            
