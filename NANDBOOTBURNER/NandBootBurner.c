@@ -429,6 +429,26 @@ BOOL GetPhyBlkAddr(DWORD LogicalBlkAddr, DWORD *pNxtGoodBlkAddr)
     return TRUE;
 }
 
+
+
+BOOL GetPhyBlkAddrEx(DWORD LogicalStart,DWORD LogicalBlkAddr, DWORD *pNxtGoodBlkAddr)
+{
+    DWORD i = 0,offset = 0;
+    for(i=LogicalStart; i < (LogicalBlkAddr+1+offset); i++)
+    {
+        if(FMD_GetBlockStatus(i) == BLOCK_STATUS_BAD)
+        {
+        	offset++;
+        }
+    }
+    *pNxtGoodBlkAddr = LogicalBlkAddr+offset;
+     if(!GetGoodPhyBlockEx(*pNxtGoodBlkAddr, pNxtGoodBlkAddr))
+     {
+        return FALSE;
+     }
+    return TRUE;
+}
+
 void CalculateParity_New(BYTE d, BYTE * p)
 {
     BYTE Bit0  = (d & (1 << 0))  ? 1 : 0; 
@@ -1017,6 +1037,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
     SectorInfo sectorInfo,VersectorInfo;
     SECTOR_ADDR sectorAddr, startSectorAddr, endSectorAddr;
     DWORD StartLogBlkAddr,PhyBlockAddr;
+    DWORD dwNkStartBlock;
     
     // Boot Configuration and Buffer
     if(!NANDBootInit())
@@ -1060,13 +1081,12 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
 
     // Calculate block range for the NK image
     if (flag != IMAGE_RSNK)
-    	StartLogBlkAddr = NANDImageCfg.dwNkOffset / flashInfo.dwBytesPerBlock + dwIndex;
+    	dwNkStartBlock = NANDImageCfg.dwNkOffset / flashInfo.dwBytesPerBlock;
     else
-		StartLogBlkAddr = IMAGE_BOOT_RESCUEIMG_NAND_OFFSET + dwIndex; // rescue OS
-	
-    DEBUGMSG(TRUE, (_T("INFO: Programming NAND flash blocks [0x%x].\r\n"), StartLogBlkAddr));        
+		dwNkStartBlock = IMAGE_BOOT_RESCUEIMG_NAND_OFFSET; // rescue OS
+	StartLogBlkAddr = dwNkStartBlock + dwIndex;     
 
-	if(!GetPhyBlkAddr(StartLogBlkAddr, &PhyBlockAddr))
+	if(!GetPhyBlkAddrEx(dwNkStartBlock,StartLogBlkAddr, &PhyBlockAddr))
 	{
 		RETAILMSG(TRUE, (_T("Error: No good block found - unable to store image0x%x!\r\n"),StartLogBlkAddr));
 		goto Exit_NK;
@@ -1087,8 +1107,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
 			goto Exit_NK;
 		}
 	}
-
-
+	RETAILMSG(TRUE, (_T("......")));
     // Erase the block...
     if (!FMD_EraseBlock(PhyBlockAddr))
     {
@@ -1141,6 +1160,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
     }
     return(TRUE);
 Exit_NK:
+	RETAILMSG(TRUE, (_T("INFO: NANDWriteNK Failed [0x%x]\r\n"), PhyBlockAddr)); 
 	if(pVerifyBuf)
 	{  
 		LocalFree(pVerifyBuf);
