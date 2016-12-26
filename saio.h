@@ -15,7 +15,7 @@
 #define SAIO_SYS_HV		L"\\System\\system.hv"
 #define SAIO_USR_HV		L"\\System\\default\\user.hv"
 #define SAIO_DEF_MK		L"\\System\\default.mky"
-#define UCE_VER			L"A2.3"
+#define UCE_VER			L"A2.4"
 
 
 #ifndef	SAIO_BOOT_LOADER
