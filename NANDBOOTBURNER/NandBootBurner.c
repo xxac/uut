@@ -904,7 +904,7 @@ begin_program:
 		ERRORMSG(TRUE, (_T("GetGoodPhyBlock failed: 0x%x\r\n"),StartLogBlkAddr));  
 		goto Exit_EBOOT;
 	}
-	if(PhyBlockAddr>IMAGE_BOOT_BOOTIMAGE_NAND_OFFSET + IMAGE_BOOT_BOOTIMAGE_NAND_BLOCKS)
+	if(PhyBlockAddr>=IMAGE_BOOT_BOOTIMAGE_NAND_OFFSET + IMAGE_BOOT_BOOTIMAGE_NAND_BLOCKS)
 	{
 		RETAILMSG(TRUE, (_T("Error: Eboot blocks have been damaged! \r\n")));
 		goto Exit_EBOOT;
@@ -1093,7 +1093,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
 	}
 	if (flag != IMAGE_RSNK)
 	{
-		if(PhyBlockAddr>IMAGE_BOOT_NKIMAGE_NAND_OFFSET+IMAGE_BOOT_NKIMAGE_BLOCKS)
+		if(PhyBlockAddr>=IMAGE_BOOT_NKIMAGE_NAND_OFFSET+IMAGE_BOOT_NKIMAGE_BLOCKS)
 		{
 			RETAILMSG(TRUE, (_T("Error: NK blocks have been damaged! \r\n")));
 			goto Exit_NK;
@@ -1101,7 +1101,7 @@ BOOL NANDWriteNK(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE flag)
 	}
 	else
 	{
-		if(PhyBlockAddr>IMAGE_BOOT_RESCUEIMG_NAND_OFFSET+IMAGE_BOOT_RESCUEIMG_NAND_BLOCKS)
+		if(PhyBlockAddr>=IMAGE_BOOT_RESCUEIMG_NAND_OFFSET+IMAGE_BOOT_RESCUEIMG_NAND_BLOCKS)
 		{
 			RETAILMSG(TRUE, (_T("Error: RSNK blocks have been damaged! \r\n")));
 			goto Exit_NK;
@@ -1232,7 +1232,7 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
 			RETAILMSG(TRUE, (_T("GetGoodPhyBlockEx failed: 0x%x\r\n"),StartLogBlkAddr));  
 			goto Exit_TCBVCB;
 		}
-		if(PhyBlockAddr>IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
+		if(PhyBlockAddr>=IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
 		{
 			RETAILMSG(TRUE, (_T("Error: TCB blocks have been damaged! \r\n")));
 			goto Exit_TCBVCB;
@@ -1271,7 +1271,7 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
 	}
 	if (tv == IMAGE_TCB)
 	{
-		if(PhyBlockAddr>IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
+		if(PhyBlockAddr>=IMAGE_BOOT_BOOTCFG_NAND_OFFSET+IMAGE_BOOT_BOOTCFG_NAND_BLOCKS)
 		{
 			RETAILMSG(TRUE, (_T("Error: TCB blocks have been damaged! \r\n")));
 			goto Exit_TCBVCB;
@@ -1279,7 +1279,7 @@ BOOL NANDWriteTCBVCB(DWORD dwIndex, LPBYTE pImage, DWORD dwLength, BYTE tv)
 	}
 	else
 	{
-		if(PhyBlockAddr>IMAGE_BOOT_VECTCFG_NAND_OFFSET+IMAGE_BOOT_VECTCFG_NAND_BLOCKS)
+		if(PhyBlockAddr>=IMAGE_BOOT_VECTCFG_NAND_OFFSET+IMAGE_BOOT_VECTCFG_NAND_BLOCKS)
 		{
 			RETAILMSG(TRUE, (_T("Error: VCB blocks have been damaged! \r\n")));
 			goto Exit_TCBVCB;
